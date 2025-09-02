@@ -1,14 +1,9 @@
 <template>
   <div class="home">
     <div class="container">
-      <div class="hero">
-        <h1 class="hero-title">欢迎使用 BoxFullCalc</h1>
-        <p class="hero-subtitle">一个现代化的 Vue 3 应用程序</p>
-      </div>
-
       <!-- 装箱计算器 -->
       <section class="calculator card">
-        <h2>📦 装箱计算器</h2>
+        <h2>📦 混排装箱计算器</h2>
   <form @submit.prevent>
           <div class="row">
             <label>车厢宽度 (单位: m)</label>
@@ -28,10 +23,6 @@
             <input type="number" step="0.01" min="0" v-model.number="itemH" @input="resetCalculated" />
           </div>
 
-          <div class="row inline">
-            <label><input type="checkbox" v-model="allowRotate" @change="resetCalculated" /> 允许旋转放置 (90°)</label>
-          </div>
-
           <div class="row">
             <button type="button" class="btn" @click="calculate">计算</button>
           </div>
@@ -40,29 +31,22 @@
             <div v-if="validationMessage" class="error">{{ validationMessage }}</div>
             <div v-else>
               <p>最大可放数量: <strong>{{ maxCount }}</strong></p>
-              <p class="muted">布局一 (不旋转)： {{ layout1.wCount }} × {{ layout1.hCount }}，剩余空间 (宽×长): {{ layout1.remW.toFixed(2) }} × {{ layout1.remH.toFixed(2) }} m</p>
-              <p class="muted" v-if="allowRotate">布局二 (旋转)： {{ layout2.wCount }} × {{ layout2.hCount }}，剩余空间 (宽×长): {{ layout2.remW.toFixed(2) }} × {{ layout2.remH.toFixed(2) }} m</p>
+              <p class="muted">混排布局：正放 {{ layout3.normalCount }} 件 + 旋转 {{ layout3.rotatedCount }} 件</p>
+              <p class="muted">剩余空间 (宽×长): {{ layout3.normalLayout.remW.toFixed(2) }} × {{ layout3.normalLayout.remH.toFixed(2) }} m</p>
             </div>
           </div>
 
           <!-- 可视化示意图 -->
           <div class="visualization" v-if="calculated">
             <h3>布局示意图</h3>
-            <div class="viz-container">
-              <svg class="viz-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" aria-label="布局示意图">
-                <!-- container background -->
-                <rect x="0" y="0" width="100" height="100" fill="#f6f8fa" stroke="#333" stroke-width="0.6" />
-                <!-- cells -->
-                <g v-for="(cell, idx) in cellsToRender" :key="idx">
-                  <rect :x="cell.x" :y="cell.y" :width="cell.w" :height="cell.h" fill="#2c3e50" stroke="#ffffff" stroke-width="0.4" rx="1" />
-                </g>
-              </svg>
-              <div class="viz-legend">
-                <p>容器: 宽 {{ containerW }} m × 长 {{ containerH }} m</p>
-                <p>货物: 宽 {{ itemW }} m × 长 {{ itemH }} m</p>
-                <p>选用布局: {{ chosenLayoutName }}，共 {{ chosenLayout.total }} 件</p>
-              </div>
-            </div>
+            <LayoutCanvas
+              :containerW="containerW!"
+              :containerH="containerH!"
+              :itemW="itemW!"
+              :itemH="itemH!"
+              :cells="cellsToRender"
+              :totalCount="chosenLayout.total"
+            />
           </div>
         </form>
       </section>
@@ -76,15 +60,15 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import LayoutCanvas from '../components/LayoutCanvas.vue'
 
 
 
 // 装箱计算相关
-const containerW = ref<number | null>(2.4) // 默认示例值，单位 m
-const containerH = ref<number | null>(2.6)
-const itemW = ref<number | null>(1)
-const itemH = ref<number | null>(1.2)
-const allowRotate = ref(false)
+const containerW = ref<number | null>(4.0) // 车厢宽度，单位 m
+const containerH = ref<number | null>(2.5) // 车厢长度，单位 m
+const itemW = ref<number | null>(1.2) // 货物宽度，单位 m
+const itemH = ref<number | null>(1.8) // 货物长度，单位 m
 const calculated = ref(false)
 const validationMessage = ref('')
 
@@ -111,7 +95,7 @@ const resetCalculated = () => {
 }
 
 // 监听输入变化
-;[containerW, containerH, itemW, itemH, allowRotate].forEach(r => {
+;[containerW, containerH, itemW, itemH].forEach(r => {
   r.value; // ensure ref
 })
 
@@ -129,105 +113,123 @@ function fitCount(cW: number, cH: number, iW: number, iH: number) {
   const remH = cH - hCount * iH
   return { total, wCount, hCount, remW, remH }
 }
+function calculateMixedPacking(containerW: number, containerH: number, itemW: number, itemH: number) {
+  // 全正放布局
+  const normalLayout = fitCount(containerW, containerH, itemW, itemH)
+  const normalTotal = normalLayout.total
 
-const layout1 = computed(() => {
-  if (error.value) return { total: 0, wCount: 0, hCount: 0, remW: 0, remH: 0 }
-  return fitCount(containerW.value as number, containerH.value as number, itemW.value as number, itemH.value as number)
-})
+  // 全旋转布局
+  const rotatedLayout = fitCount(containerW, containerH, itemH, itemW)
+  const rotatedTotal = rotatedLayout.total
 
-const layout2 = computed(() => {
-  if (error.value) return { total: 0, wCount: 0, hCount: 0, remW: 0, remH: 0 }
-  return fitCount(containerW.value as number, containerH.value as number, itemH.value as number, itemW.value as number)
+  // 贪婪混合布局：先尽可能多放正放货物，再在剩余空间放旋转货物
+  const greedyNormal = fitCount(containerW, containerH, itemW, itemH)
+  const remainingW = containerW - greedyNormal.wCount * itemW
+  const remainingH = containerH - greedyNormal.hCount * itemH
+  const greedyRotated = fitCount(remainingW, remainingH, itemH, itemW)
+  const greedyTotal = greedyNormal.total + greedyRotated.total
+
+  // 选择三种方案中的最优解
+  let maxTotal = Math.max(normalTotal, rotatedTotal, greedyTotal)
+  let bestCombination
+
+  if (maxTotal === normalTotal) {
+    bestCombination = {
+      normalCount: normalTotal,
+      rotatedCount: 0,
+      normalLayout: normalLayout,
+      rotatedLayout: { wCount: 0, hCount: 0, remW: 0, remH: 0 }
+    }
+  } else if (maxTotal === rotatedTotal) {
+    bestCombination = {
+      normalCount: 0,
+      rotatedCount: rotatedTotal,
+      normalLayout: { wCount: 0, hCount: 0, remW: 0, remH: 0 },
+      rotatedLayout: rotatedLayout
+    }
+  } else {
+    bestCombination = {
+      normalCount: greedyNormal.total,
+      rotatedCount: greedyRotated.total,
+      normalLayout: greedyNormal,
+      rotatedLayout: greedyRotated
+    }
+  }
+
+  return {
+    total: maxTotal,
+    normalCount: bestCombination.normalCount,
+    rotatedCount: bestCombination.rotatedCount,
+    normalLayout: bestCombination.normalLayout,
+    rotatedLayout: bestCombination.rotatedLayout
+  }
+}
+
+const layout3 = computed(() => {
+  if (error.value) return { total: 0, normalCount: 0, rotatedCount: 0, normalLayout: { wCount: 0, hCount: 0, remW: 0, remH: 0 }, rotatedLayout: { wCount: 0, hCount: 0, remW: 0, remH: 0 } }
+  return calculateMixedPacking(containerW.value as number, containerH.value as number, itemW.value as number, itemH.value as number)
 })
 
 const maxCount = computed(() => {
   if (error.value) return 0
-  const a = layout1.value.total
-  const b = allowRotate.value ? layout2.value.total : 0
-  return Math.max(a, b)
+  return layout3.value.total
 })
 
-// 选择要展示的布局（取最大数的那个）
+// 直接使用混排布局
 const chosenLayout = computed(() => {
-  if (error.value) return layout1.value
-  const a = layout1.value
-  const b = layout2.value
-  if (!allowRotate.value) return a
-  return b.total > a.total ? b : a
+  if (error.value) return layout3.value
+  return layout3.value
 })
 
 const chosenLayoutName = computed(() => {
   if (error.value) return ''
-  const a = layout1.value.total
-  const b = layout2.value.total
-  if (!allowRotate.value) return '未旋转'
-  return b > a ? '已旋转' : '未旋转'
+  return '混排'
 })
 
-// 生成用于 SVG 渲染的单元格（归一化到 100x100 视口）
+// 生成用于 SVG 渲染的单元格（使用实际尺寸）
 const cellsToRender = computed(() => {
   if (error.value) return []
-  // 使用选中的布局：计算每个货物在视口中的宽高与位置
   const layout = chosenLayout.value
   const cW = (containerW.value as number)
   const cH = (containerH.value as number)
-  const itemWval = layout === layout1.value ? (itemW.value as number) : (allowRotate.value ? (itemH.value as number) : (itemW.value as number))
-  const itemHval = layout === layout1.value ? (itemH.value as number) : (allowRotate.value ? (itemW.value as number) : (itemH.value as number))
+  const iW = (itemW.value as number)
+  const iH = (itemH.value as number)
 
-  // 视口缩放比例 (100 为视口最大尺寸)
-  const scale = Math.min(100 / cW, 100 / cH)
+  const cells: Array<{ x: number; y: number; w: number; h: number; type: string }> = []
 
-  const wCount = layout.wCount
-  const hCount = layout.hCount
-  const cellW = itemWval * scale
-  const cellH = itemHval * scale
-
-  const cells: Array<{ x: number; y: number; w: number; h: number }> = []
-  for (let r = 0; r < hCount; r++) {
-    for (let c = 0; c < wCount; c++) {
-      const x = c * cellW
-      const y = r * cellH
-      cells.push({ x, y, w: cellW, h: cellH })
+  // 渲染正放货物
+  const normalWCount = layout.normalLayout.wCount
+  const normalHCount = layout.normalLayout.hCount
+  for (let r = 0; r < normalHCount; r++) {
+    for (let c = 0; c < normalWCount; c++) {
+      const x = c * iW
+      const y = r * iH
+      cells.push({ x, y, w: iW, h: iH, type: 'normal' })
     }
   }
-  // 将坐标按比例放大/居中以填充视口
-  // 计算实际占用宽高
-  const usedW = wCount * cellW
-  const usedH = hCount * cellH
-  const offsetX = (100 - usedW) / 2
-  const offsetY = (100 - usedH) / 2
-  return cells.map(cell => ({ x: +(cell.x + offsetX).toFixed(2), y: +(cell.y + offsetY).toFixed(2), w: +cell.w.toFixed(2), h: +cell.h.toFixed(2) }))
+
+  // 渲染旋转货物（在剩余空间中）
+  const remainingW = cW - (normalWCount * iW)
+  const remainingH = cH - (normalHCount * iH)
+  const rotatedWCount = layout.rotatedLayout.wCount
+  const rotatedHCount = layout.rotatedLayout.hCount
+
+  for (let r = 0; r < rotatedHCount; r++) {
+    for (let c = 0; c < rotatedWCount; c++) {
+      const x = (normalWCount * iW) + (c * iH)
+      const y = (normalHCount * iH) + (r * iW)
+      cells.push({ x, y, w: iH, h: iW, type: 'rotated' })
+    }
+  }
+
+  return cells
 })
 </script>
 
 <style scoped>
-.hero {
-  text-align: center;
-  padding: 3rem 0;
-}
-
-.hero-title {
-  font-size: 3rem;
-  color: #2c3e50;
-  margin-bottom: 1rem;
-}
-
-.hero-subtitle {
-  font-size: 1.2rem;
-  color: #7f8c8d;
-  margin-bottom: 2rem;
-}
-
 /* features removed */
 
 /* actions removed */
-
-@media (max-width: 768px) {
-  .hero-title {
-    font-size: 2rem;
-  }
-  
-}
 
 /* calculator styles */
 .calculator {
@@ -271,22 +273,6 @@ const cellsToRender = computed(() => {
 
 .visualization {
   margin-top: 1rem;
-}
-.viz-container {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-}
-.viz-svg {
-  width: 320px;
-  height: 320px;
-  background: white;
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.06);
-}
-.viz-legend {
-  font-size: 0.95rem;
-  color: #444;
 }
 </style>
 
